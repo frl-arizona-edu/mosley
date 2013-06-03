@@ -40,9 +40,9 @@ public:
     void initialize()
     {
         // There must be two available cameras to continue.
-        int num_cams;
+        int num_cams = 0;
         auto result = is_GetNumberOfCameras(&num_cams);
-        if (result != IS_SUCCESS)
+        if (num_cams < 2)
             throw Camera_exception{"two cameras not available"};
 
         // Initialize each camera and setup the auto exit handler.
