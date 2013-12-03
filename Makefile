@@ -1,5 +1,5 @@
 CXXFLAGS += -O2 -g -std=c++0x
-LDLIBS += -lueye_api
+LDLIBS += -lueye_api -lopencv_core -lopencv_highgui
 
 all: mosley
 

@@ -1,10 +1,13 @@
 #include <array>
 #include <chrono>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <sstream>
+#include <vector>
 #include <cstdlib>
+#include <opencv2/opencv.hpp>
 #include <ueye.h>
 
 // The general exception for errors related to camera operations.
@@ -63,28 +66,44 @@ public:
         current = (current+1) % cameras.size();
 
         start = system_clock::now();
+        is_SetImageMem(camera.id, camera.mem, camera.mem_id);
         auto result = is_FreezeVideo(camera.id, IS_WAIT);
         if (result != IS_SUCCESS) {
             std::cerr << "is_FreezeVideo:" << result << '\n';
             return;
         }
 
-        IMAGE_FILE_PARAMS params;
-        params.pwchFileName = nullptr;
-        params.pnImageID = nullptr;
-        params.ppcImageMem = nullptr;
+#if 0
+        const int sz = 3840*2748*24;
+        char* dest = new char[sz];
+        result = is_CopyImageMem(camera.id, camera.mem, camera.mem_id, dest);
+        if (result != IS_SUCCESS)
+            std::cerr << "CopyImage: " << result << '\n';
+        std::vector<unsigned char> buf(dest, dest+sz);
+        cv::Mat img = cv::imdecode(buf, 1);
+        std::stringstream ss;
+        ss << "images/camera-" << camera.id << "-" << count[current]++ << ".jpg";
+        cv::imwrite(ss.str(), img);
+        delete[] dest;
+#endif
 
-        end = system_clock::now();
-        const auto elapsed = duration_cast<milliseconds>(end-start).count();
-        std::cout << "camera:" << camera.id << " " << "time:" << elapsed << "ms\n";
+        IMAGE_FILE_PARAMS params;
+        params.pnImageID = (UINT*)&camera.mem_id;
+        params.ppcImageMem = &camera.mem;
+
         std::wstringstream ss;
-        ss << "camera-" << camera.id << "-" << count[current]++ << ".jpg";
+        ss << "images/camera-" << camera.id << "-" << count[current]++ << ".jpg";
         params.pwchFileName = const_cast<wchar_t*>(ss.str().c_str());
         params.nFileType = IS_IMG_JPG;
         params.nQuality = 80;
         auto r = is_ImageFile(camera.id, IS_IMAGE_FILE_CMD_SAVE,
                 (void*)&params, sizeof(params));
         switch (r) {
+        case IS_SUCCESS:
+            break;
+        case IS_INVALID_PARAMETER:
+            std::cerr << "IS_INVALID_PARAMETER\n";
+            break;
         case IS_FILE_READ_INVALID_BMP_ID:
             std::cerr << "IS_FILE_READ_INVALID_BMP\n";
             break;
@@ -98,9 +117,13 @@ public:
             std::cerr << "IS_NOT_SUPPORTED\n";
             break;
         default:
-            std::cerr << "unknown\n";
+            std::cerr << "unknown:" << r << '\n';
             break;
         }
+
+        end = system_clock::now();
+        const auto elapsed = duration_cast<milliseconds>(end-start).count();
+        std::cout << "camera:" << camera.id << " " << "time:" << elapsed << "ms\n";
     }
 
 private:
