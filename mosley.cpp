@@ -1,14 +1,15 @@
 #include <array>
 #include <chrono>
 #include <iostream>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <sstream>
 #include <vector>
 #include <cstdlib>
-#include <opencv2/opencv.hpp>
 #include <ueye.h>
+#include <zmq.h>
 
 // The general exception for errors related to camera operations.
 struct Camera_exception : std::runtime_error {
@@ -53,7 +54,7 @@ public:
             initialize(camera);
     }
 
-    void snap()
+    std::vector<char> snap()
     {
         using namespace std::chrono;
         time_point<system_clock> start, end;
@@ -66,25 +67,17 @@ public:
         current = (current+1) % cameras.size();
 
         start = system_clock::now();
-        is_SetImageMem(camera.id, camera.mem, camera.mem_id);
-        auto result = is_FreezeVideo(camera.id, IS_WAIT);
-        if (result != IS_SUCCESS) {
-            std::cerr << "is_FreezeVideo:" << result << '\n';
-            return;
-        }
-
+        INT result;
+        do {
+            is_SetImageMem(camera.id, camera.mem, camera.mem_id);
+            result = is_FreezeVideo(camera.id, IS_WAIT);
+        } while (result != IS_SUCCESS);
 #if 0
         const int sz = 3840*2748*24;
         char* dest = new char[sz];
         result = is_CopyImageMem(camera.id, camera.mem, camera.mem_id, dest);
         if (result != IS_SUCCESS)
-            std::cerr << "CopyImage: " << result << '\n';
-        std::vector<unsigned char> buf(dest, dest+sz);
-        cv::Mat img = cv::imdecode(buf, 1);
-        std::stringstream ss;
-        ss << "images/camera-" << camera.id << "-" << count[current]++ << ".jpg";
-        cv::imwrite(ss.str(), img);
-        delete[] dest;
+            std::cerr << "CopyImage: " << result << std::endl;
 #endif
 
         IMAGE_FILE_PARAMS params;
@@ -124,6 +117,13 @@ public:
         end = system_clock::now();
         const auto elapsed = duration_cast<milliseconds>(end-start).count();
         std::cout << "camera:" << camera.id << " " << "time:" << elapsed << "ms\n";
+
+        std::stringstream filename;
+        filename << "images/camera-" << camera.id << "-" << count[current]++ << ".jpg";
+        std::ifstream image(filename.str().c_str(), std::ios::binary);
+        return std::vector<char>((
+                std::istreambuf_iterator<char>(image)),
+                std::istreambuf_iterator<char>());
     }
 
 private:
@@ -187,8 +187,19 @@ int main()
     try {
         Camera camera;
         camera.initialize();
-        for (int i = 0; i < 10; i++)
-            camera.snap();
+
+        void* context = zmq_ctx_new();
+        void* socket = zmq_socket(context, ZMQ_REP);
+        int rc = zmq_bind(socket, "tcp://*:5555");
+
+        while (true) {
+            char buffer[10];
+            std::cout << "waiting for request...\n";
+            zmq_recv(socket, buffer, 10, 0);
+            auto image = camera.snap();
+            zmq_send(socket, &image[0], image.size(), 0);
+            std::cout << "...sent image\n";
+        }
     } catch (Camera_exception& e) {
         std::cerr << e.what() << '\n';
         exit(1);
