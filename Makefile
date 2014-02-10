@@ -1,6 +1,6 @@
-CXXFLAGS += -O2 -g -std=c++0x -I/opt/zmq3/include
-LDFLAGS += -L/opt/zmq3/lib
-LDLIBS += -lueye_api -lopencv_core -lopencv_highgui -lzmq
+CXXFLAGS += -O2 -g -std=c++0x -I/opt/zmq3/include -I/opt/msgpack/include
+LDFLAGS += -L/opt/zmq3/lib -L/opt/msgpack/lib
+LDLIBS += -lueye_api -lzmq -lmsgpack
 
 all: mosley
 

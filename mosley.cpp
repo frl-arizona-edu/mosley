@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <ueye.h>
 #include <zmq.h>
+#include <msgpack.hpp>
 
 // The general exception for errors related to camera operations.
 struct Camera_exception : std::runtime_error {
@@ -72,21 +73,19 @@ public:
             is_SetImageMem(camera.id, camera.mem, camera.mem_id);
             result = is_FreezeVideo(camera.id, IS_WAIT);
         } while (result != IS_SUCCESS);
-#if 0
-        const int sz = 3840*2748*24;
-        char* dest = new char[sz];
-        result = is_CopyImageMem(camera.id, camera.mem, camera.mem_id, dest);
-        if (result != IS_SUCCESS)
-            std::cerr << "CopyImage: " << result << std::endl;
-#endif
 
         IMAGE_FILE_PARAMS params;
         params.pnImageID = (UINT*)&camera.mem_id;
         params.ppcImageMem = &camera.mem;
 
-        std::wstringstream ss;
-        ss << "images/camera-" << camera.id << "-" << count[current]++ << ".jpg";
-        params.pwchFileName = const_cast<wchar_t*>(ss.str().c_str());
+        std::wstringstream wss;
+        wss << "images/camera-" << camera.id
+            << "-" << count[current]++ << ".jpg";
+
+        const std::wstring ws = wss.str();
+        const std::string filename{ws.begin(), ws.end()};
+
+        params.pwchFileName = const_cast<wchar_t*>(ws.c_str());
         params.nFileType = IS_IMG_JPG;
         params.nQuality = 80;
         auto r = is_ImageFile(camera.id, IS_IMAGE_FILE_CMD_SAVE,
@@ -116,11 +115,10 @@ public:
 
         end = system_clock::now();
         const auto elapsed = duration_cast<milliseconds>(end-start).count();
-        std::cout << "camera:" << camera.id << " " << "time:" << elapsed << "ms\n";
+        std::clog << "camera: " << camera.id << " "
+            << "time: " << elapsed << "ms\n";
 
-        std::stringstream filename;
-        filename << "images/camera-" << camera.id << "-" << count[current]++ << ".jpg";
-        std::ifstream image(filename.str().c_str(), std::ios::binary);
+        std::ifstream image(filename, std::ios::binary);
         return std::vector<char>((
                 std::istreambuf_iterator<char>(image)),
                 std::istreambuf_iterator<char>());
@@ -168,9 +166,12 @@ private:
         aoi.s32Y = 1372;
         aoi.s32Width = 3040;
         aoi.s32Height = 406;
+
+#if 0
         result = is_AOI(camera.id, IS_AOI_IMAGE_SET_AOI, &aoi, sizeof(aoi));
         if (result != IS_SUCCESS)
             throw Camera_exception{"could not set AOI for camera"};
+#endif
     }
 
     void destroy(const Physical_camera& camera)
@@ -192,13 +193,21 @@ int main()
         void* socket = zmq_socket(context, ZMQ_REP);
         int rc = zmq_bind(socket, "tcp://*:5555");
 
+        typedef std::vector<char> bindata_t;
+        typedef msgpack::type::tuple<bindata_t, int, int> msgpack_obj;
+
         while (true) {
-            char buffer[10];
-            std::cout << "waiting for request...\n";
-            zmq_recv(socket, buffer, 10, 0);
-            auto image = camera.snap();
+            char unused[10];
+            std::clog << "waiting for request..." << std::endl;
+            zmq_recv(socket, unused, 10, 0);
+
+            bindata_t image = camera.snap();
+            msgpack_obj src(image, 3648, 2736);
+            std::stringstream buf;
+            msgpack::pack(buf, src);
+
             zmq_send(socket, &image[0], image.size(), 0);
-            std::cout << "...sent image\n";
+            std::clog << "...sent image" << std::endl;
         }
     } catch (Camera_exception& e) {
         std::cerr << e.what() << '\n';
