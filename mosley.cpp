@@ -55,7 +55,7 @@ public:
             initialize(camera);
     }
 
-    std::vector<char> snap()
+    std::vector<unsigned char> snap()
     {
         using namespace std::chrono;
         time_point<system_clock> start, end;
@@ -118,9 +118,9 @@ public:
         std::clog << "camera: " << camera.id << " "
             << "time: " << elapsed << "ms\n";
 
-        std::ifstream image(filename, std::ios::binary);
-        return std::vector<char>((
-                std::istreambuf_iterator<char>(image)),
+        std::ifstream file(filename, std::ios::binary);
+        return std::vector<unsigned char>((
+                std::istreambuf_iterator<char>(file)),
                 std::istreambuf_iterator<char>());
     }
 
@@ -160,6 +160,7 @@ private:
         is_ImageFormat(camera.id, IMGFRMT_CMD_SET_FORMAT,
                 const_cast<int*>(&format), sizeof(format));
 
+#if 0
         // Set the area of interest for this camera.
         IS_RECT aoi;
         aoi.s32X = 800;
@@ -167,7 +168,6 @@ private:
         aoi.s32Width = 3040;
         aoi.s32Height = 406;
 
-#if 0
         result = is_AOI(camera.id, IS_AOI_IMAGE_SET_AOI, &aoi, sizeof(aoi));
         if (result != IS_SUCCESS)
             throw Camera_exception{"could not set AOI for camera"};
@@ -183,6 +183,14 @@ private:
     }
 };
 
+struct Telemetry {
+    int width;
+    int height;
+    std::vector<unsigned char> image;
+
+    MSGPACK_DEFINE(width, height, image);
+};
+
 int main()
 {
     try {
@@ -193,24 +201,24 @@ int main()
         void* socket = zmq_socket(context, ZMQ_REP);
         int rc = zmq_bind(socket, "tcp://*:5555");
 
-        typedef std::vector<char> bindata_t;
-        typedef msgpack::type::tuple<bindata_t, int, int> msgpack_obj;
-
         while (true) {
             char unused[10];
             std::clog << "waiting for request..." << std::endl;
             zmq_recv(socket, unused, 10, 0);
 
-            bindata_t image = camera.snap();
-            msgpack_obj src(image, 3648, 2736);
-            std::stringstream buf;
-            msgpack::pack(buf, src);
+            Telemetry t{3840, 2748, camera.snap()};
+            msgpack::sbuffer sbuf;
+            msgpack::pack(sbuf, t);
 
-            zmq_send(socket, &image[0], image.size(), 0);
+            zmq_msg_t msg;
+            zmq_msg_init_size(&msg, sbuf.size());
+            memcpy(zmq_msg_data(&msg), sbuf.data(), sbuf.size());
+            zmq_msg_send(&msg, socket, 0);
+            zmq_msg_close(&msg);
             std::clog << "...sent image" << std::endl;
         }
     } catch (Camera_exception& e) {
-        std::cerr << e.what() << '\n';
+        std::cerr << e.what() << std::endl;
         exit(1);
     }
 }
